@@ -1,6 +1,6 @@
 # Notes-on-Crime-Mapping-and-Spatial-Data-Analysis-in-R
 
-Notes and code from Juanjo Medina and Reka Solymosi's book *Crime Mapping and Spatial Data Analysis in R*. 
+Notes and code following Juanjo Medina and Reka Solymosi's book *Crime Mapping and Spatial Data Analysis in R*. 
 
 Progress:
 - [ ] 1. Preamble
