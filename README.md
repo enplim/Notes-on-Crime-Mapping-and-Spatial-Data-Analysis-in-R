@@ -5,7 +5,7 @@ Notes and code following Juanjo Medina and Reka Solymosi's book *Crime Mapping a
 Progress:
 - [x] 1. Preamble
 - [x] 2. Producing Your First Crime Map
-- [ ] 3. Basic Geospatial Operations in R
+- [x] 3. Basic Geospatial Operations in R
 - [ ] 4. Mapping Rates and Counts
 - [ ] 5. Variations of Thematic Mapping
 - [ ] 6. Basics of Cartographic Design

@@ -1,0 +1,737 @@
+---
+title: 'Notes on Chatper 3: Basic Geospatial Operations in R'
+author: "The Caveman Coder"
+date: "2026-01-19"
+output: html_document
+---
+
+Loading the relevant libraries:
+```{r}
+# for reading data and data carpentry
+library(readr)
+library(dplyr)
+library(janitor)
+library(units)
+library(purrr)
+
+# for handling spatial data
+library(sf)
+library(tidygeocoder)
+library(crsuggest)
+
+# for mapping and visualization
+library(leaflet)
+library(RColorBrewer)
+
+# for providing access to spatial data
+library(osmdata)
+```
+
+## Exploring the relationship between alcohol outlets and crime
+
+Are alcohol outlets crime attractors or crime generators?
+
+
+## Acquiring relevant data
+
+Reading in crime data:
+```{r}
+crimes <- read_csv("data/data/2019-06-greater-manchester-street.csv")
+glimpse(crimes)
+```
+
+Cleaning the variable names using `janitor::clean_names()`:
+```{r}
+crimes <- clean_names(crimes)
+glimpse(crimes)
+```
+
+Reading in a geoJSON spatial file:
+```{r}
+manchester_ward <- st_read("data/data/wards.geojson")
+head(manchester_ward)
+```
+
+Too much data! Filtering:
+```{r}
+city_center <- manchester_ward |> 
+  filter(wd16nm == "City Centre")
+
+head(city_center)
+```
+
+Extracting the geometry data only using `st_geometry()`:
+```{r, fig.cap="Plot of city center ward geometry"}
+city_center_geometry <- st_geometry(city_center)
+
+# quickly plot the geometry object
+plot(city_center_geometry)
+```
+
+Getting the bounding box for our region of interest, using`osmdata::getbb()`:
+```{r, fig.cap="Plot of Greater Manchester boundary"}
+bb_sf <- osmdata::getbb(
+  place_name = "greater manchester united kingdom",
+  format_out = "sf_polygon"
+)
+
+head(bb_sf)
+
+# quickly plot the geometry object from `bb_sf`:
+plot(st_geometry(bb_sf))
+```
+
+Querying OSM for bars (the drinking establishment) within the Greater Manchester Area using `opq()` (which stands for "overpass query"):
+```{r}
+osm_bar_sf <- osmdata::opq(bbox = bb_sf) |>  # select bounding box
+  add_osm_feature(key = "amenity", value = "bar") |>  # select features
+  osmdata_sf() # specify class
+
+class(osm_bar_sf)
+```
+
+
+Inspecting `osm_bar_sf`
+```{r}
+head(osm_bar_sf)
+```
+
+Saving only the points:
+```{r}
+osm_bar_sf <- osm_bar_sf$osm_points
+head(osm_bar_sf)
+```
+
+
+Too much data! Filtering to exclude blanks
+```{r}
+osm_bar_sf <- osm_bar_sf |> filter(!is.na(name))
+dim(osm_bar_sf)
+```
+
+We are still left with `r dim(osm_bar_sf)[[1]]` bars in our data.
+
+
+## Attribute operations
+
+The function `filter()` is an attribute operation because it enabled us to make changes to the data by manipulating elements in the attribute table.  
+
+Further filtering the data to include only a particular violent crime:
+```{r}
+unique(crimes$crime_type)
+
+crimes <- crimes |> 
+  filter(crime_type == "Violence and sexual offences")
+```
+
+## Spatial operations
+
+
+### Reprojecting coordinates
+
+Checking the CRS of our `crimes` data:
+```{r}
+st_crs(crimes)
+```
+
+There is no CRS because `crimes` data is not a spatial object (yet)
+
+Converting `crimes` to a spatial object:
+```{r}
+crimes <- crimes |> st_as_sf(
+  coords = c("longitude", "latitude"),
+  crs = 4326,
+  agr = "constant",
+  na.fail = FALSE
+)
+```
+
+Here are the attributes for the `agr` parameter:
+- `"constant"`: attributes that are constant throughout the geometry (like land use).  
+- `"aggregate"`: used when the attribute is an aggregate value (like population count or population density).  
+- `"identity"`: used when the attributes uniquely identifies the geometry of the the object we are interested in, like building ID, or city name.  
+
+
+Checking the CRS of `crime` once again:
+```{r}
+st_crs(crimes)
+```
+
+Checking the CRS of `city_center`:
+```{r}
+st_crs(city_center)
+```
+
+The `city_center` uses a different CRS. 
+
+Re-projecting the CRS of `city_center` to WGS84 using `st_transform()`:
+```{r}
+city_center <- st_transform(city_center, crs = 4326)
+```
+
+Checking if the projections are now similar:
+```{r}
+st_crs(crimes) == st_crs(city_center)
+```
+
+Checking the CRS of the `osm_bar_sf` data from Open Street Map:
+```{r}
+st_crs(osm_bar_sf)
+```
+
+Now all data sources have matching CRS!
+
+
+### Subsetting points
+
+Plotting `osm_bar_sf` and `city_center` geometries:
+```{r, fig.cap="May bars fall outside the City Center ward"}
+plot(st_geometry(osm_bar_sf), col = "red")
+plot(st_geometry(city_center), add = TRUE)
+```
+
+Plotting `osm_bar_sf`, `crimes`, and `city_center` geometries:
+```{r, fig.cap="Most crimes fall outside the City Center ward"}
+plot(st_geometry(osm_bar_sf), col = "red")
+plot(st_geometry(crimes), col = "blue", add = TRUE)
+plot(st_geometry(city_center), add = TRUE)
+```
+
+
+Getting the intersection of `city_center` and `crimes` geometries:
+```{r}
+cc_crimes <- st_intersects(city_center, crimes)
+```
+
+Subsetting `crimes` using the result of `st_intersects()`:
+```{r}
+cc_crimes <- crimes[unlist(cc_crimes),]
+head(cc_crimes)
+```
+
+Plotting `city_center` and `cc_crimes` geometries:
+```{r, fig.cap="Crimes inside the City Center ward"}
+plot(st_geometry(city_center))
+plot(st_geometry(cc_crimes), col = "blue", add = TRUE)
+```
+
+Applying the same concept for the bars in Manchester:
+```{r}
+cc_bars <- st_intersects(city_center, osm_bar_sf)
+cc_bars <- osm_bar_sf[unlist(cc_bars), ]
+```
+
+
+Plotting the three geometries again:
+```{r, fig.cap="Bars and crimes within the City Center"}
+plot(st_geometry(city_center))
+plot(st_geometry(cc_bars), col = "red", add = TRUE)
+plot(st_geometry(cc_crimes), col = "blue", add = TRUE)
+```
+
+
+How do we connect the crimes to the bars then?
+
+
+## Building buffers
+
+One approach to answer the question above is to build a buffer around the bars, and count all the crimes that fall within a specific radius of this bar. 
+
+
+Trying the `st_buffer()` function:
+```{r}
+prem_buffer <- st_buffer(cc_bars, 1)
+```
+
+This works but it does not make much sense since the current CRS uses "degrees" instead of direct length units. The function created buffers of 1 degree around the bars. 
+
+Transforming the CRS of bars to BNG (British National Grid) first, before buffering with a radius of 400m:
+```{r}
+bars_bng <- st_transform(cc_bars, crs = 27700) # code for BNG is 27700
+bars_buffer <- st_buffer(bars_bng, 400)
+```
+
+Plotting:
+```{r, fig.cap="Bars with 400m buffers"}
+plot(st_geometry(bars_buffer))
+plot(st_geometry(bars_bng), add = TRUE)
+```
+
+
+There are a lot of overlaps here, since there are many bars in the area. Choosing a buffering radius of 100 meters:
+```{r}
+bar_buffer_100 <- st_buffer(bars_bng, 100)
+
+# plotting
+plot(st_geometry(bar_buffer_100))
+plot(st_geometry(bars_bng), add = TRUE)
+```
+
+Transforming the buffer data back to WGS84:
+```{r}
+buffer_WGS84 <- st_transform(bar_buffer_100, crs = 4326)
+```
+
+Plotting once more:
+```{r, fig.cap="Crimes around the 100m buffer polygons"}
+plot(st_geometry(buffer_WGS84))
+plot(st_geometry(cc_crimes), col = "blue", add = TRUE)
+```
+
+How many crimes occur within the buffer polygons?
+
+
+### Counting points within a polygon
+
+In computational geometry, the question above falls under the **point-in-polygon** problem category. 
+
+Joining the buffer data to `cc_crimes` data and creating a frequency table of the number of crimes within the buffer of each bar:
+```{r}
+crimes_per_prem <- st_join(buffer_WGS84, cc_crimes, left = FALSE) |> 
+  count(name)
+
+head(crimes_per_prem)
+```
+
+Inspecting which premises have the most violent crimes:
+```{r}
+crimes_per_prem |> 
+  select(name, n) |> 
+  arrange(desc(n))
+```
+
+
+Since there are overlapping buffer regions, there might be plenty of double-counting here.  
+
+### Finding the nearest point
+
+To overcome this double-counting issue, we can assign each crime point to the closest possible bar. 
+
+Getting the nearest bar to crime data point using `st_nearest_feature()`:
+```{r}
+crime_w_bars <- cc_crimes |> 
+  mutate(nearest_bar = cc_bars[st_nearest_feature(cc_crimes, cc_bars), 2])
+
+head(crime_w_bars)
+```
+
+
+Removing the geometry data at this point:
+```{r}
+crimes_per_prem_2 <- crime_w_bars |> 
+  st_drop_geometry() |> 
+  group_by(nearest_bar$name) |> 
+  summarize(num_crimes = n()) |> 
+  rename(name = `nearest_bar$name`)
+
+head(crimes_per_prem_2)
+```
+
+Joining this data to cc_bars:
+```{r}
+crimes_per_prem_2 <-left_join(
+  cc_bars, crimes_per_prem_2, 
+  by = c("name" = "name")
+)
+```
+
+Looking at the bar with the most crimes now:
+```{r}
+crimes_per_prem_2 |> 
+  select(name, num_crimes) |> 
+  arrange(desc(num_crimes))
+```
+
+
+Which of the two approaches is better? it depends on the case. 
+
+Using the second approach, double-counting is avoided, at the expense of attributing the crime to the nearest bar. This too, may not be a fair assumption to make, since drunk people do illogical things. 
+
+
+### Measuring distances
+
+Looking closely at Crafty Pig:
+```{r}
+cp <- cc_bars |> 
+  filter(name == "Crafty Pig")
+
+cp_buffer <- bar_buffer_100 |>
+  filter(name == "Crafty Pig") |> 
+  st_transform(4326)
+
+cp_crimes <- crime_w_bars |> 
+  filter(nearest_bar$name == "Crafty Pig")
+```
+
+
+Using `mapply()` and `st_union()` functions to draw a line between each crime and the Crafty Pig bar:
+```{r}
+dist_lines <- st_sfc(
+  mapply(
+    function(a, b){
+      st_cast(st_union(a, b), "LINESTRING") # specify function
+    },
+    cp_crimes$geometry, # input a for the function
+    cp_crimes$nearest_bar$geometry, # input b for the function
+    SIMPLIFY = FALSE # don't attempt to reduce the result
+  )
+)
+```
+
+Note: the `st_sfc()` is used to create a simple feature geometry list column.
+
+
+Plotting:
+```{r}
+plot(st_geometry(cp_buffer))
+plot(st_geometry(cp), col = "black", add = TRUE)
+plot(st_geometry(cp_crimes), col = "blue", add = TRUE)
+plot(st_geometry(dist_lines), col = "green", add = TRUE)
+```
+
+
+All the crimes happened at only one location, which is within the 100m buffer. How far exactly?
+
+```{r}
+cp_crimes <- cp_crimes |> 
+  mutate(distance = st_distance(geometry, nearest_bar$geometry))
+```
+
+Arranging:
+```{r}
+cp_crimes$distance[1:4]
+```
+
+Why is it that all these crimes are geo-coded to one single location?
+This is due to geo-masking of data, to ensure anonymity. 
+
+
+## Plotting interactive maps with leaflet
+
+```{r}
+m <- leaflet() |> 
+  addTiles() |> 
+  addMarkers(
+    lng=-2.230899,  # longitude
+    lat=53.464987,  # latitude
+    popup="University of Manchester"
+  )
+
+m
+```
+
+Adding multiple points:
+```{r}
+latitudes = c(53.464987, 53.472726, 53.466649) 
+longitudes = c(-2.230899, -2.245481, -2.243421)
+popups = c("You are here", "Here is another point", "Here is another point")
+
+df <- data.frame(latitudes, longitudes, popups)
+
+m <- leaflet(data = df) |> 
+  addTiles() |> 
+  addMarkers(
+    lng = ~longitudes,
+    lat = ~latitudes,
+    popup = ~popups
+  )
+
+m
+```
+
+Creating a color palette using `colorBin()`:
+```{r}
+pal <- colorBin(
+  "RdPu", 
+  domain = crimes_per_prem$n, # what value to use for shading
+  bins = 5,
+  pretty = TRUE
+) 
+```
+
+
+Using the created color bin to color polygons that on a leaflet map:
+```{r}
+leaflet(crimes_per_prem) |> 
+  addTiles() |> 
+  addPolygons(
+    fillColor = ~pal(n),
+    fillOpacity = 0.8,
+    weight = 1,
+    opacity = 1,
+    color = "black",
+    label = ~as.character(name)
+  ) |> 
+  addLegend(
+    pal = pal,
+    values = ~n,
+    opacity = 0.7,
+    title = "Violent crimes",
+    position = "bottomright"
+  )
+```
+
+
+## Geocoding
+
+Creating an address to geocode:
+```{r}
+addresses <- data.frame(
+  name = "Sherlock Holmes",
+  address = "221B Baker Street, London, UK"
+)
+```
+
+Using the function `geocode()` function from `geocoder` package to get the coordinates for the address above:
+```{r}
+addresses |> geocode(address, method = "osm")
+```
+
+### Geocoding on a bigger scale
+
+Getting data about different alcohol outlets via the Licensed Premises dataset:
+```{r}
+data_url <- "http://www.manchester.gov.uk/open/download/downloads/id/169/licensed_premises.csv"
+
+lic_prem <- read_csv(data_url) |> clean_names()
+head(lic_prem)
+glimpse(lic_prem)
+```
+
+
+Since there are more than  65K entries here, to illustrate geocoding, we will slice the data to include only the top 50 entries, then extract the complete address to a new column, and finally, get the coordinates of the complete address.
+```{r}
+lic_prem <- lic_prem |> 
+  slice(1:50) |>  # Select first 50 entries
+  mutate(complete_address = paste(locationtext, postcode, sep = ", ")) |> 
+  geocode(complete_address, method = "osm")
+```
+
+
+Making sure that the coordinates are numeric:
+```{r}
+glimpse(lic_prem)
+```
+
+Creating leaflet map:
+```{r}
+leaflet(data = lic_prem) |> 
+  addTiles() |> 
+  addMarkers(
+    lng = ~long,
+    lat = ~lat,
+    popup = ~as.character(premisesname),
+    label = ~as.character(premisesname)
+  )
+```
+
+
+## Measuring distance more throughly
+
+How far are police stations in Madrid?
+
+
+Reading in data:
+```{r}
+comisarias <- read_csv("data/data/nationalpolice.csv")
+
+comisarias_sf <- st_as_sf(
+  comisarias,
+  coords = c("X", "Y"),
+  crs = 4326
+)
+```
+
+Creating unique IDs for each row:
+```{r}
+comisarias_sf$id <- as.numeric(rownames(comisarias_sf))
+```
+
+Get boundary data for Madrid
+```{r}
+madrid <- st_read("data/data/madrid.geojson")
+```
+
+
+Plotting with leaflet:
+```{r}
+leaflet(comisarias_sf) |> 
+  addTiles() |> 
+  addMarkers(data = comisarias_sf) |> 
+  addPolygons(data = madrid)
+```
+
+
+### Distance in geographical space
+
+Common distances used in spatial data science:
+- Euclidean distance: the length of a segment connected by 2 points in a 2d space.
+- great circle distance: the length of arc linking 2 points on a sphere. 
+- Manhattan distance: distance between points along a rectilinear path (grid-like)  
+
+Calculating distance between a selected police headquarter to two other headquarters:
+```{r}
+dist_headquarters <- st_distance(
+  slice(comisarias_sf, 34),
+  slice(comisarias_sf, c(1, 10, 25))
+)
+
+dist_headquarters
+```
+
+Expressing the distance units in kilometers:
+```{r}
+set_units(dist_headquarters, "km")
+```
+
+Calculating distances between all police stations:
+```{r}
+m_distance <- st_distance(comisarias_sf)
+head(m_distance)
+```
+
+
+### A practical example to evaluate distance
+
+Checking the CRS used in `madrid` data:
+```{r}
+st_crs(madrid)
+```
+
+
+Reprojecting the CRS of `madrid` to another using `crsuggest` (if we don't know the EPSG code):
+```{r}
+suggested_crs <- suggest_crs(madrid)
+head(suggested_crs)
+```
+
+Transforming the CRS of `madrid` to the "best" suggestion from the `crsuggest` package:
+```{r}
+madrid_meters <- st_transform(madrid, crs = 2062)
+head(madrid_meters)
+```
+
+
+Dividing Madrid into a 250m x 250m grid: 
+```{r}
+madrid_grid <- st_make_grid(madrid_meters, cellsize = 250)
+```
+
+
+Extracting only the points in the limits of Madrid:
+```{r}
+madrid_grid <- st_intersection(madrid_grid, madrid_meters)
+```
+
+Plotting:
+```{r}
+plot(madrid_grid)
+```
+
+
+Estimating the minimum distance value from the center of each grid, to the nearest station:
+```{r}
+comisarias_sf_meters <- st_transform(comisarias_sf, crs = 2062)
+distances <- st_distance(
+  comisarias_sf_meters,
+  st_centroid(madrid_grid)
+) |> 
+  as_tibble()
+
+head(distances)
+```
+
+
+Processing our data in preparation for mapping in leaflet:
+```{r}
+police_distances <- data.frame(
+  us = st_transform(madrid_grid, crs = 4326), # set grid to WGS 84 CRS
+  distance_km = map_dbl(distances, min) / 1000, # extract min. distance for each grid
+  location_id = map_dbl(distances, function(x) match(min(x), x))
+) |> # extract the value's index
+  left_join(comisarias_sf, by = c("location_id" = "id"))
+
+head(police_distances)
+```
+
+Inspect the distribution of the calculated distances:
+```{r}
+hist(police_distances$distance_km, main = "Distance to nearest police station")
+```
+
+
+More preparation for mapping: creating a custom icon for plotting data points...
+```{r}
+icon_url_pt1 <- "https://upload.wikimedia.org/wikipedia/commons/"
+icon_url_pt2 <- "a/ad/189-woman-police-officer-1.svg"
+
+# creating the icon
+police_icon <- makeIcon(
+  paste0(icon_url_pt1, icon_url_pt2), 
+  iconWidth = 12,
+  iconHeight = 20
+)
+```
+
+Creating a color scale for plotting:
+```{r}
+bins <- quantile(police_distances$distance_km)
+
+pal <- colorBin(
+  c("#0868AC", "#43A2CA", "#7BCCC4", "#BAE4BC", "#F0F9E8"),
+  domain = police_distances$distance_km,
+  bins = bins,
+  reverse = TRUE
+)
+```
+
+Finally creating the leaflet map:
+```{r}
+full_map <- leaflet() |> 
+  addTiles() |> 
+  addMarkers(
+    data = comisarias_sf,
+    icon = ~police_icon,
+    group = "Police stations"
+  ) |> 
+  addPolygons(
+    data = police_distances[[1]],
+    fillColor = pal(police_distances$distance_km),
+    fillOpacity = 0.8,
+    weight = 0,
+    opacity = 1,
+    color = "transparent",
+    group = "Distances",
+    highlight = highlightOptions(
+      weight = 2, color = "#666",
+      bringToFront = TRUE, opacity = 1
+    ),
+    popupOptions = popupOptions(
+      autoPan = FALSE,
+      closeOnClick = TRUE,
+      textOnly = TRUE
+    )
+  ) |> 
+  addLegend(
+    pal = pal,
+    values = police_distances$distance_km,
+    opacity = 0.8,
+    title = "Distance (Km)",
+    position = "bottomright"
+  ) |> 
+  addScaleBar(position = "bottomleft")
+
+full_map
+```
+
+
+
+
+
+
+
+
+
+
+
+
