@@ -3,8 +3,8 @@
 Notes and code following Juanjo Medina and Reka Solymosi's book *Crime Mapping and Spatial Data Analysis in R*. 
 
 Progress:
-- [ ] 1. Preamble
-- [ ] 2. Producing Your First Crime Map
+- [x] 1. Preamble
+- [x] 2. Producing Your First Crime Map
 - [ ] 3. Basic Geospatial Operations in R
 - [ ] 4. Mapping Rates and Counts
 - [ ] 5. Variations of Thematic Mapping

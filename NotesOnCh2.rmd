@@ -1,0 +1,277 @@
+---
+title: 'Notes on Chapter 2: Producing your first crime map'
+author: "The Caveman Coder"
+date: "2026-01-18"
+output: html_document
+---
+
+- Spatial or environmental criminologists most often work with discrete data. In other scientific disciplines, continuous data may be more common.  
+
+Loding related packages:
+```{r}
+# packages for reading data and data carpentry
+library(readr)
+library(tibble)
+library(janitor)
+library(dplyr)
+
+# packages for handling spatial data
+library(sf)
+
+# packages for data visualization
+library(ggplot2)
+library(ggspatial)
+```
+
+
+Basic concepts related to spatial information:
+- Place: the location (like a whole country, or a particular road, etc.)  
+- Attributes: any recorded characteristic or property of a place.  
+- Object: model representation of a place, usually made up of points, lines, areas (polygons), or as raster data (made up of pixels or tiles)
+- Networks: special type of data structure used to store information that forms a graph (node-link diagram). 
+
+
+Important types of map in GIS:
+- reference map: emphasis is on the location of spatial objects like cities, mountains, rivers, etc.  
+- thematic map: used to represent the spatial distribution of attributes. Also called statistical maps.  
+
+
+Common ideas used in dealing with geographical information:
+- coordinate reference system (CRS): a system of denoting every place on the Earth using numbers (aka coordinates).  Can further divided into projected coordinate reference systems (rectangular or flat, or Cartesian) or geographic coordinate reference systems (uses a 3-d model like a spheroid as the "base" of reference for locating any place on Earth).  
+
+
+Example of a geographic coordinate system:
+- World Geodetic System (WGS 84): uses longitude, latitude, and elevations.  
+
+Example of a projected coordinate system:
+- British National Grid (BNG): uses "Easting" and "Northing"
+
+All projections suffer from distortions because it is impossible to fit a 3-d object into a flat object.   
+
+The "EPSG" notation is usually used to refer to different coordinate systems. This notation is developed by the European Petroleum Survey Group, hence the name.  
+
+- Note: due to plate tectonics motion and maybe, other factors, objects may not line up properly even when two or more "maps" using the same coordinate system (like WGS 84 -- the most common) are layered on top of each other.  
+
+
+## 2.6 Getting started with crime data
+
+Reading `.csv` data:
+```{r}
+crimes <- read_csv("data/data/2019-06-greater-manchester-street.csv")
+
+glimpse(crimes)
+head(crimes)
+```
+
+Using `janitor` to clean up the variable names (remove extra spaces, etc. on the column names):
+```{r}
+crimes <- clean_names(crimes)
+glimpse(crimes)
+```
+
+
+## 2.7 From dataframes to spatial objects
+
+```{r}
+head(crimes, n = 2)
+```
+
+- The `latitude` and `longitude` allow us put a `point` on the map.  
+- The `location` variable shows the place where the crime happened along a particular road.  
+- The `lsoa_name` column contains names for some sort of area (the Lower Layer Super Output Area).  
+
+
+## 2.8 The simple features framework
+
+Creating a simple features (or sf) object from the `longitude` and `latitude` columns:
+```{r}
+crimes_sf <- st_as_sf(
+  crimes,
+  coords = c("longitude", "latitude"),
+  crs = 4326 # crs is WGS84
+)
+
+class(crimes_sf)
+```
+
+
+## 2.9 Plotting data with ggplot2
+
+
+```{r}
+df <- crimes |> 
+  filter(crime_type %in% c("Robbery", "Shoplifting", "Theft from the person")) |> 
+  group_by(crime_type) |> 
+  count()
+
+df
+```
+
+
+Plotting `df`:
+```{r}
+ggplot(df, aes(x = crime_type, y = n)) +
+  geom_col() +
+  labs(title = "Frequency of crime types") +
+  xlab("Crime type") +
+  ylab("Number of crimes") +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 15, hjust = 1),
+    panel.border = element_rect(color = "black", fill = NA, size = 1)
+  )
+```
+
+
+Creating a new dataframe including `last_outcome` category variable:
+```{r}
+df2 <- crimes |> 
+  filter(crime_type %in% c("Robbery", "Shoplifting", "Theft from the person")) |> 
+  group_by(crime_type, last_outcome_category) |> 
+  count()
+
+head(df2)
+```
+
+Plotting with `fill` parameter in `aes()`:
+```{r}
+df2 |> ggplot(
+  aes(x = crime_type, y = n, fill = last_outcome_category)
+) + 
+  geom_col() +
+  labs(
+    title = "Frequency of crime types",
+    xlab = "Crime type",
+    ylab = "Number of crimes"
+  ) +
+  theme_minimal() +
+  theme(
+    axis.text.x = element_text(angle = 15, hjust = 1),
+    panel.border = element_rect(color = "black", fill = NA, size = 1)
+  ) +
+  scale_fill_brewer(
+    type = "qual",
+    palette = 3,
+    name = "Outcome"
+  )
+```
+
+
+## 2.10 Mapping crime data as points
+
+Using `geom_sf` to plot spatial data in `ggplot2`:
+```{r}
+crimes_sf |> ggplot() +
+  geom_sf()
+```
+
+Adding abasemap layer to the plot above using `annotation_map_tile():
+```{r}
+crimes_sf |> ggplot() +
+  annotation_map_tile() +
+  geom_sf()
+  
+```
+
+
+## 2.11 Mapping crime data as polygons
+
+In this this case, more information is needed -- a dataset that contains the
+boundaries as polygons. In the data folder, this particular dataset already
+exists as shapefiles.
+
+Reading the related shapefiles using `st_read()`:
+```{r}
+shp_name <- "data/data/BoundaryData/england_lsoa_2011.shp"
+manchester_lsoa <- st_read(shp_name)
+glimpse(manchester_lsoa)
+```
+
+
+Plotting a map using shapefile data using `geom_sf()`:
+```{r}
+manchester_lsoa |> ggplot() +
+  geom_sf()
+```
+
+
+### Data wrangling using `dplyr` to combine crime data and the shapefile data
+
+Checking the number of observations:
+```{r}
+nrow(manchester_lsoa)
+nrow(crimes)
+```
+
+
+Counting the number of cases within each LSOA
+```{r}
+crimes_per_LSOA <- crimes |> 
+  group_by(lsoa_code) |> 
+  summarize(count = n())
+
+crimes_per_LSOA
+```
+
+#### Joining this data to the `sf` object
+
+Checking if the relevant datasets share a column:
+```{r}
+names(manchester_lsoa)
+names(crimes_per_LSOA)
+
+head(manchester_lsoa)
+head(crimes_per_LSOA)
+```
+
+The `code` column in `manchester_lsoa` and the `lsoa_code` column in 
+`crime_per_lsoa` have matching values!
+
+Joining the two datasets by these matching columns:
+```{r}
+manchester_lsoa <- left_join(
+  manchester_lsoa, crimes_per_LSOA,
+  by = c("code" = "lsoa_code")
+)
+
+head(manchester_lsoa)
+```
+
+Saving the result locally as a shapefile using `st_write()`:
+```r
+st_write(
+  manchester_lsoa,
+  "data/data/BoundaryData/manchester_crime_lsoa.shp",
+  append = FALSE
+)
+```
+
+Putting polygon data on the map:
+```{r}
+manchester_lsoa |> 
+  ggplot() +
+  geom_sf(
+    aes(fill = count)
+  )
+```
+
+Plotting polygon data including a basemap layer:
+```{r}
+manchester_lsoa |> 
+  ggplot() +
+  # Basemap Layer
+  annotation_map_tile() + 
+  # Polygon layer 
+  geom_sf(
+    aes(fill = count),
+    alpha = 0.5
+  ) +
+  scale_fill_gradient2(name = "Number of crimes")
+```
+
+
+
+
+
+
+
